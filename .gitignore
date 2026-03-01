@@ -26,3 +26,5 @@ apps/studio/test-results
 *.log
 *.orig
 surreal_data/
+apps/studio/runtime_node_modules
+apps/studio/dist-web

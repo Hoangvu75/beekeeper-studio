@@ -56,6 +56,9 @@ export default Vue.extend({
           this.selectedQuery = params.selectedQuery.text;
           this.$emit("bks-query-selection-change", params)
         },
+        onEntityNavigate: (params) => {
+          this.$emit("bks-entity-navigate", params);
+        },
         columnsGetter: (entity: Entity) => {
           return this.columnsGetter?.(entity.name) || [];
         },

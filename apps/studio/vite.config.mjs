@@ -25,7 +25,7 @@ export default defineConfig({
       'better-sqlite3',
       'oracledb'
     ]
-},
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -36,7 +36,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist/renderer', // Output directory for the renderer process
+    outDir: 'dist-web', // Pre-built static SPA — served by Node http in production
     emptyOutDir: true, // Clears the directory before building
     rollupOptions: {
       external: [],
@@ -47,7 +47,8 @@ export default defineConfig({
     }
   },
   server: {
-    port: 3003, // Development server port
-    // open: './src/index.html'
+    host: process.env.BKS_DEV_HOST || '127.0.0.1',
+    port: Number(process.env.BKS_DEV_PORT || 3003),
+    strictPort: true,
   }
 });

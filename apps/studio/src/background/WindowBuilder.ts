@@ -16,7 +16,7 @@ const log = rawLog.scope('WindowBuilder')
 const windows: BeekeeperWindow[] = []
 
 export interface OpenOptions {
-  url?: string
+  openUrl?: string
 }
 
 function getIcon() {
@@ -59,7 +59,9 @@ class BeekeeperWindow {
       show: false,
     })
 
-    const devUrl = 'http://localhost:3003'
+    const devHost = process.env.BKS_DEV_HOST || '127.0.0.1'
+    const devPort = Number(process.env.BKS_DEV_PORT || 3003)
+    const devUrl = `http://${devHost}:${devPort}`
     const startUrl = 'app://./index.html'
     const appUrl = platformInfo.isDevelopment ? devUrl : startUrl
     // const appUrl = startUrl
@@ -146,11 +148,14 @@ class BeekeeperWindow {
     this.win.show()
 
     await this.win.loadURL(this.appUrl)
+    const shouldOpenDevtools = process.env.BKS_AUTO_OPEN_DEVTOOLS === '1'
     if ((platformInfo.env.development && !platformInfo.env.test) || platformInfo.debugEnabled) {
       globalShortcut.register('F12', this.win.webContents.toggleDevTools.bind(this.win.webContents))
       globalShortcut.register('CommandOrControl+Shift+I', this.win.webContents.toggleDevTools.bind(this.win.webContents))
 
-      this.win.webContents.openDevTools()
+      if (shouldOpenDevtools) {
+        this.win.webContents.openDevTools()
+      }
     }
   }
 

@@ -26,9 +26,11 @@ const langIdToDialect = {
 
 export class SqlTextEditor extends TextEditor {
   private extensionsConfig: SQLExtensionsConfig;
+  private completionSource: CompletionSource;
 
   constructor(extensionsConfig?: SQLExtensionsConfig){
     super();
+    this.completionSource = { entities: [] };
     this.extensionsConfig = {
       identiferDialect: "generic",
       onQuerySelectionChange: () => {},
@@ -44,6 +46,7 @@ export class SqlTextEditor extends TextEditor {
    * Sets the completion source with entities and schema information
    */
   setCompletionSource(completionSource: CompletionSource) {
+    this.completionSource = completionSource;
     applyEntities(
       this.view,
       completionSource.entities,
@@ -66,6 +69,8 @@ export class SqlTextEditor extends TextEditor {
       baseExtensions,
       sqlExtensions({
         ...this.extensionsConfig,
+        entitiesGetter: () => this.completionSource.entities || [],
+        defaultSchemaGetter: () => this.completionSource.defaultSchema,
         dialect: langIdToDialect[config.languageId] || StandardSQL,
       }),
     ];

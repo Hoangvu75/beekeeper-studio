@@ -2,7 +2,7 @@ import rawLog from "@bksLogger";
 import platformInfo from "@/common/platform_info";
 import * as path from "path";
 import _ from "lodash";
-import { existsSync, readFileSync, copyFileSync, accessSync, constants } from "fs";
+import { existsSync, readFileSync, copyFileSync, accessSync, constants, mkdirSync } from "fs";
 import { parseIni, processRawConfig } from "@/config/helpers";
 import {
   BksConfigProvider,
@@ -91,7 +91,9 @@ export function checkConflicts(
   return results;
 }
 
-const bundledConfigPath = path.join(process.resourcesPath);
+const bundledConfigPath = process.env.BKS_BUNDLED_CONFIG_DIR
+  ? path.resolve(process.env.BKS_BUNDLED_CONFIG_DIR)
+  : path.join(process.resourcesPath);
 
 function copyBundledConfig(file: ConfigFileName, dest: string) {
   log.info(`Copying bundled config ${file} to ${dest}.`);
@@ -102,7 +104,15 @@ function copyBundledConfig(file: ConfigFileName, dest: string) {
     );
   }
   try {
-    accessSync(dest, constants.W_OK);
+    const destDir = path.dirname(dest);
+    if (!existsSync(destDir)) {
+      mkdirSync(destDir, { recursive: true });
+    }
+    if (existsSync(dest)) {
+      accessSync(dest, constants.W_OK);
+    } else {
+      accessSync(destDir, constants.W_OK);
+    }
     copyFileSync(src, dest);
   } catch (err) {
     log.warn(`Skipping copy of ${file}. Permission denied or dest not writable:`, err.message);

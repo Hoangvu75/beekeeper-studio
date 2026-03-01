@@ -161,7 +161,7 @@ export default Vue.extend({
     )
     const query = querystring.parse(window.location.search, { parseBooleans: true })
     if (query) {
-      this.url = query.url || null
+      this.url = (query.openUrl as string) || (query.url as string) || null
       this.runningWayland = !!query.runningWayland
     }
 

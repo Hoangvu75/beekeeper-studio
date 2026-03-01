@@ -60,6 +60,7 @@
         @bks-selection-change="handleEditorSelectionChange"
         @bks-blur="onTextEditorBlur?.()"
         @bks-query-selection-change="handleQuerySelectionChange"
+        @bks-entity-navigate="handleEditorEntityNavigate"
         @bks-apply-preset="applyPreset"
       />
       <span class="expand" />
@@ -1544,6 +1545,41 @@
         }
 
         return table?.columns.map((c) => c.columnName);
+      },
+      handleEditorEntityNavigate({ entity }: { entity?: Entity }) {
+        if (!entity?.name) return;
+
+        const equalsPart = (left?: string, right?: string) => {
+          if (_.isNil(left) || _.isNil(right)) return left === right;
+          return left === right || left.toLowerCase() === right.toLowerCase();
+        };
+
+        const isTableLike = (table: TableOrView) => {
+          return !table.entityType || ["table", "view", "materialized-view"].includes(table.entityType);
+        };
+
+        const tableCandidates = this.tables.filter(isTableLike);
+        let table = tableCandidates.find(
+          (candidate) =>
+            equalsPart(candidate.name, entity.name) &&
+            (!!entity.schema ? equalsPart(candidate.schema, entity.schema) : true)
+        );
+
+        if (!table && !_.isNil(entity.schema)) {
+          table = tableCandidates.find((candidate) => equalsPart(candidate.name, entity.name));
+        }
+
+        if (!table && this.defaultSchema) {
+          table = tableCandidates.find(
+            (candidate) =>
+              equalsPart(candidate.name, entity.name) &&
+              equalsPart(candidate.schema, this.defaultSchema)
+          );
+        }
+
+        if (!table) return;
+
+        this.$root.$emit(AppEvent.loadTable, { table });
       },
       handleQuerySelectionChange({ queries, selectedQuery }) {
         this.individualQueries = queries;

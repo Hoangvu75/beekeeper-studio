@@ -203,11 +203,14 @@ app.on('browser-window-created', (_event: electron.Event, window: electron.Brows
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.on('ready', async () => {
+  const disableDevtoolsExtension = process.env.BKS_DISABLE_DEVTOOLS_EXTENSION === '1';
   if (isDevelopment && !process.env.IS_TEST) {
 
-      installExtension('iaajmlceplecbljialhhkmedjlpdblhp')
-        .then((name) => console.log(`Added Extension:  ${name}`))
-        .catch((err) => console.log('An error occurred: ', err));
+      if (!disableDevtoolsExtension) {
+        installExtension('iaajmlceplecbljialhhkmedjlpdblhp')
+          .then((name) => console.log(`Added Extension:  ${name}`))
+          .catch((err) => console.log('An error occurred: ', err));
+      }
     // Need to explicitly disable CORS when running in dev mode because
     // we can't connect to bigquery-emulator on localhost.
     // See: https://github.com/electron/electron/issues/23664
@@ -218,7 +221,7 @@ app.on('ready', async () => {
   }
 
   // this gets positional arguments
-  const options = platformInfo.parsedArgs._.map((url: string) => ({ url }))
+  const options = platformInfo.parsedArgs._.map((url: string) => ({ openUrl: url }))
   const settings = await initBasics()
 
   if (options.length > 0) {
@@ -275,7 +278,7 @@ ipcMain.handle('requestPorts', async () => {
 app.on('open-file', async (event, file) => {
   event.preventDefault();
   const settings = await initBasics()
-  await buildWindow(settings, { url: file })
+  await buildWindow(settings, { openUrl: file })
 });
 
 // Open a connection from a url (e.g. postgres://host)
@@ -283,7 +286,7 @@ app.on('open-url', async (event, url) => {
   event.preventDefault();
   const settings = await initBasics()
 
-  await buildWindow(settings, { url })
+  await buildWindow(settings, { openUrl: url })
 });
 
 ipcMain.handle('isMaximized', () => {
