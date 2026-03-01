@@ -3,6 +3,8 @@ import { PluginData } from "@/common/appdb/models/PluginData";
 import { Manifest, PluginContext, PluginManager, PluginRegistryEntry, PluginRepository } from "@/services/plugin";
 import { PluginTimeoutError } from "@/services/plugin/errors";
 
+const embedMode = process.env.BKS_EMBED_MODE === "1";
+
 interface IPluginHandlers {
   "plugin/plugins": () => Promise<PluginContext[]>
   "plugin/entries": ({ clearCache }: { clearCache: boolean }) => Promise<{ official: PluginRegistryEntry[], community: PluginRegistryEntry[] }>
@@ -24,6 +26,8 @@ interface IPluginHandlers {
 
 export const PluginHandlers: (pluginManager: PluginManager) => IPluginHandlers = (pluginManager) => ({
   "plugin/waitForInit": async () => {
+    if (embedMode) return;
+
     if (pluginManager.isInitialized) {
       return;
     }
@@ -43,52 +47,77 @@ export const PluginHandlers: (pluginManager: PluginManager) => IPluginHandlers =
     });
   },
   "plugin/plugins": async () => {
+    if (embedMode) return [];
     return pluginManager.getPlugins();
   },
   "plugin/entries": async ({ clearCache }) => {
+    if (embedMode) {
+      return { official: [], community: [] };
+    }
     if (clearCache) {
       pluginManager.registry.clearCache();
     }
     return await pluginManager.registry.getEntries();
   },
   "plugin/repository": async ({ id }) => {
+    if (embedMode) {
+      return { id } as PluginRepository;
+    }
     return await pluginManager.getRepository(id);
   },
   "plugin/install": async ({ id }) => {
+    if (embedMode) {
+      throw new Error(`Plugin install is disabled in embedded mode: ${id}`);
+    }
     return await pluginManager.installPlugin(id);
   },
   "plugin/update": async ({ id }) => {
+    if (embedMode) {
+      throw new Error(`Plugin update is disabled in embedded mode: ${id}`);
+    }
     return await pluginManager.updatePlugin(id);
   },
   "plugin/uninstall": async ({ id }) => {
+    if (embedMode) return;
     return await pluginManager.uninstallPlugin(id);
   },
   "plugin/checkForUpdates": async ({ id }) => {
+    if (embedMode) return false;
     return await pluginManager.checkForUpdates(id);
   },
   "plugin/setAutoUpdateEnabled": async ({ id, enabled }) => {
+    if (embedMode) return;
     await pluginManager.setPluginAutoUpdateEnabled(id, enabled);
   },
   "plugin/getAutoUpdateEnabled": async ({ id }) => {
+    if (embedMode) return false;
     return pluginManager.getPluginAutoUpdateEnabled(id);
   },
   "plugin/viewEntrypointExists": async ({ pluginId, viewId }) => {
+    if (embedMode) return false;
     return pluginManager.viewEntrypointExists(pluginId, viewId);
   },
 
   "plugin/setData": async ({ manifest, key, value }) => {
+    if (embedMode) return;
     await PluginData.set(manifest.id, key, value);
   },
   "plugin/getData": async ({ manifest, key }) => {
+    if (embedMode) return null;
     return await PluginData.get(manifest.id, key);
   },
   "plugin/setEncryptedData": async ({ manifest, key, value }) => {
+    if (embedMode) return;
     await EncryptedPluginData.set(manifest.id, key, value);
   },
   "plugin/getEncryptedData": async ({ manifest, key }) => {
+    if (embedMode) return null;
     return await EncryptedPluginData.get(manifest.id, key);
   },
   "plugin/getAsset": async ({ manifest, path }) => {
+    if (embedMode) {
+      throw new Error(`Plugin assets are unavailable in embedded mode: ${manifest?.id || "unknown"}:${path}`);
+    }
     return await pluginManager.getPluginAsset(manifest, path);
   }
 });

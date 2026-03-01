@@ -1,5 +1,5 @@
 <template>
-  <div class="titlebar-wrapper">
+  <div class="titlebar-wrapper" v-if="!embeddedMode">
     <div
       class="titlebar-reveal"
       v-show="fullscreen"
@@ -101,6 +101,20 @@
 import { mapState, mapGetters, mapActions } from 'vuex'
 import { AppEvent } from "@/common/AppEvent";
 import AppMenu from './menu/NewAppMenu.vue'
+
+const detectEmbeddedMode = () => {
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    if (params.has('marixEmbed') || params.has('openUrl') || params.has('url')) {
+      window.sessionStorage.setItem('marixEmbed', '1');
+      return true;
+    }
+    return window.sessionStorage.getItem('marixEmbed') === '1';
+  } catch (_err) {
+    return false;
+  }
+}
+
 export default {
   components: { AppMenu },
   data() {
@@ -108,6 +122,7 @@ export default {
       maximized: false,
       fullscreen: false,
       resizeObserver: null,
+      embeddedMode: detectEmbeddedMode(),
     }
   },
   computed: {

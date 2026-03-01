@@ -2,13 +2,16 @@
   <div class="style-wrapper">
     <div
       class="beekeeper-studio-wrapper"
-      :class="{ 'beekeeper-studio-minimal-mode': $store.getters.minimalMode }"
+      :class="{
+        'beekeeper-studio-minimal-mode': $store.getters.minimalMode,
+        'marix-embedded-mode': embeddedMode,
+      }"
       :style="{ '--bks-text-editor-font-size': `${editorFontSize}px` }"
     >
-      <titlebar />
+      <titlebar v-if="!embeddedMode" />
       <template v-if="storeInitialized">
         <!-- TODO (@day): need to come up with a better way to check this. Just set a 'connected' flag? -->
-        <connection-interface v-if="!connected" />
+        <connection-interface v-if="!connected && !embeddedMode" />
         <core-interface
           @databaseSelected="databaseSelected"
           v-else
@@ -90,6 +93,20 @@ import { assignContextMenuToAllInputs } from './mixins/assignContextMenuToAllInp
 
 const log = rawLog.scope('app.vue')
 
+const detectEmbeddedMode = (query: Record<string, any> = {}) => {
+  const embeddedFromQuery = !!(query.marixEmbed || query.openUrl || query.url)
+  try {
+    const hasGlobalFlag = !!(window as any).__MARIX_EMBED__
+    if (embeddedFromQuery || hasGlobalFlag) {
+      window.sessionStorage.setItem('marixEmbed', '1')
+      return true
+    }
+    return window.sessionStorage.getItem('marixEmbed') === '1'
+  } catch (_err) {
+    return embeddedFromQuery
+  }
+}
+
 export default Vue.extend({
   name: 'App',
   mixins: [assignContextMenuToAllInputs],
@@ -102,11 +119,14 @@ export default Vue.extend({
     PluginManagerModal, ConfigurationWarningModal, PluginController, LockManager, KeyboardShortcutsModal,
   },
   data() {
+    const query = querystring.parse(window.location.search, { parseBooleans: true })
+    const embeddedMode = detectEmbeddedMode(query)
     return {
       url: null,
       interval: null,
       licenseInterval: null,
       runningWayland: false,
+      embeddedMode,
     }
   },
   computed: {
@@ -163,6 +183,7 @@ export default Vue.extend({
     if (query) {
       this.url = (query.openUrl as string) || (query.url as string) || null
       this.runningWayland = !!query.runningWayland
+      this.embeddedMode = detectEmbeddedMode(query)
     }
 
 
@@ -245,6 +266,28 @@ export default Vue.extend({
 </script>
 
 <style>
+.beekeeper-studio-wrapper.marix-embedded-mode .global-status-bar > .connection-button-wrapper,
+.beekeeper-studio-wrapper.marix-embedded-mode .global-status-bar .connection-button-wrapper {
+  display: none !important;
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+
+.beekeeper-studio-wrapper.marix-embedded-mode .connection-interface {
+  display: none !important;
+}
+
+.beekeeper-studio-wrapper.marix-embedded-mode .titlebar-wrapper,
+.beekeeper-studio-wrapper.marix-embedded-mode .titlebar,
+.beekeeper-studio-wrapper.marix-embedded-mode .titlebar.windows,
+.beekeeper-studio-wrapper.marix-embedded-mode .flyout-nav > .menu-bar {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
 
 
 </style>

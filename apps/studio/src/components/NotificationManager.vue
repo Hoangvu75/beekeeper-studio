@@ -37,7 +37,6 @@ export default Vue.extend({
   },
   methods: {
     initNotifyInterval() {
-      const intervalTime = 1000 * 60 * 60 * 3
       if (this.notificationInterval) {
         clearInterval(this.notificationInterval)
         this.notificationInterval = null
@@ -46,17 +45,8 @@ export default Vue.extend({
         clearTimeout(this.timeoutID)
         this.timeoutID = null
       }
-      if (!this.isCommunity) {
-        return
-      }
-
-      this.notificationInterval = setInterval(() => {
-        new Noty(this.upsellNotificationOptions).show()
-      }, intervalTime)
-
-      this.timeoutID = setTimeout(() => {
-        new Noty(this.upsellNotificationOptions).show()
-      }, 1000 * 60 * 5)
+      Noty.closeAll('upsell')
+      return
     }
   },
   mounted() {

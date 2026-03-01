@@ -186,13 +186,56 @@ async function missingCoreTables(): Promise<string[]> {
     for (const tableName of REQUIRED_APPDB_TABLES) {
       // sqlite doesn't allow table names as parameters, but values are static constants.
       const rows = await runner.query(
-        `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}'`,
+        `SELECT name FROM sqlite_master WHERE type='table' AND lower(name)=lower('${tableName}')`,
       );
       if (!Array.isArray(rows) || rows.length === 0) {
         missing.push(tableName);
       }
     }
     return missing;
+  } finally {
+    await runner.release();
+  }
+}
+
+async function ensureCoreTablesFallback(): Promise<void> {
+  const runner = ormConnection.connection.createQueryRunner();
+  try {
+    await runner.query(`
+      CREATE TABLE IF NOT EXISTS user_setting (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "section" varchar(255),
+        "key" varchar(255) UNIQUE NOT NULL,
+        "userValue" varchar(255),
+        "defaultValue" varchar(255) NOT NULL,
+        "linuxDefault" varchar(255),
+        "macDefault" varchar(255),
+        "windowsDefault" varchar(255),
+        "valueType" integer NOT NULL DEFAULT 0,
+        "createdAt" datetime NOT NULL DEFAULT (datetime('now')),
+        "updatedAt" datetime NOT NULL DEFAULT (datetime('now')),
+        "version" integer NOT NULL DEFAULT 0
+      )
+    `);
+    await runner.query(`
+      INSERT OR IGNORE INTO user_setting(key, defaultValue, linuxDefault, windowsDefault)
+      VALUES
+      ('theme', 'dark', 'dark', null),
+      ('menuStyle', 'native', null, 'client')
+    `);
+    await runner.query(`
+      CREATE TABLE IF NOT EXISTS license_keys(
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "email" varchar(255) NOT NULL,
+        "key" varchar(255) NOT NULL,
+        "validUntil" datetime NOT NULL,
+        "supportUntil" datetime NOT NULL,
+        "licenseType" varchar(99) NOT NULL default 'TrialLicense',
+        "createdAt" datetime NOT NULL DEFAULT (datetime('now')),
+        "updatedAt" datetime NOT NULL DEFAULT (datetime('now')),
+        "version" integer NOT NULL DEFAULT 0
+      )
+    `);
   } finally {
     await runner.release();
   }
@@ -216,6 +259,7 @@ async function init() {
 
   const migrationEnv = process.env.NODE_ENV || (platformInfo.isDevelopment ? 'development' : 'production');
   await reconnectAndMigrate(migrationEnv);
+  await ensureCoreTablesFallback();
 
   let missing = await missingCoreTables();
   if (missing.length > 0) {
@@ -244,15 +288,20 @@ async function init() {
     }
 
     await reconnectAndMigrate(migrationEnv);
+    await ensureCoreTablesFallback();
     missing = await missingCoreTables();
     if (missing.length > 0) {
       log.error(`Core app DB tables still missing after recreate: ${missing.join(', ')}`);
     }
   }
 
-  pluginManager.initialize().catch((e) => {
-    log.error("Error initializing plugin manager", e);
-  });
+  if (embedMode) {
+    log.info("Embedded mode: skipping plugin manager initialization");
+  } else {
+    pluginManager.initialize().catch((e) => {
+      log.error("Error initializing plugin manager", e);
+    });
+  }
 
   process.parentPort.postMessage({ type: 'ready' });
 }

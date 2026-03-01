@@ -3,6 +3,23 @@ import { checkConnection, errorMessages, state } from "./handlerState";
 import BksConfig from '@/common/bksConfig';
 import _ from 'lodash';
 
+const normalizeRowCount = (result: NgQueryResult): number => {
+  let rawValue: any;
+  try {
+    rawValue = (result as any)?.rowCount;
+  } catch {
+    rawValue = undefined;
+  }
+
+  // Some drivers expose rowCount via problematic getters/functions.
+  // Never invoke it as a function here; just fall back to rows length.
+  if (typeof rawValue === 'function') rawValue = undefined;
+
+  const parsed = Number(rawValue);
+  if (Number.isFinite(parsed)) return parsed;
+  return Array.isArray(result?.rows) ? result.rows.length : 0;
+};
+
 
 export interface IQueryHandlers {
   'query/execute': ({ queryId, sId }: { queryId: string, sId: string }) => Promise<QueryResult>,
@@ -21,8 +38,10 @@ export const QueryHandlers: IQueryHandlers = {
     state(sId).queries.delete(queryId);
 
     return result.map((r: NgQueryResult) => {
-      r.totalRowCount = r.rowCount;
-      if (r.rowCount > BksConfig.ui.queryEditor.maxResults) {
+      const rowCount = normalizeRowCount(r);
+      r.rowCount = rowCount;
+      r.totalRowCount = rowCount;
+      if (rowCount > BksConfig.ui.queryEditor.maxResults) {
         r.rows = _.take(r.rows, BksConfig.ui.queryEditor.maxResults);
         r.truncated = true;
         r.rowCount = r.rows.length;

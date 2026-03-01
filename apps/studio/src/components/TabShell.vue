@@ -386,7 +386,17 @@ export default Vue.extend({
         // @ts-ignore
         this.executeTime = cmdEndTime - cmdStartTime;
         results.forEach((result) => {
-          result.rowCount = result.rowCount || 0
+          const resultRows = Array.isArray(result.rows) ? result.rows : []
+          const rowCountFromFunction = typeof result.rowCount === 'function'
+            ? Number(result.rowCount())
+            : NaN
+          let resolvedRowCount = typeof result.rowCount === 'number'
+            ? result.rowCount
+            : (Number.isFinite(rowCountFromFunction) ? rowCountFromFunction : resultRows.length)
+          if (!Number.isFinite(resolvedRowCount) || resolvedRowCount < 0) {
+            resolvedRowCount = resultRows.length
+          }
+          result.rowCount = resolvedRowCount
 
           // TODO (matthew): remove truncation logic somewhere sensible
           if (result.rowCount > this.$config.maxResults) {

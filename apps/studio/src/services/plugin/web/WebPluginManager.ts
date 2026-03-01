@@ -12,6 +12,19 @@ import { convertToManifestV1, mapViewsAndMenuFromV0ToV1 } from "../utils";
 
 const log = rawLog.scope("WebPluginManager");
 
+const isEmbeddedMode = (): boolean => {
+  if (process.env.BKS_EMBED_MODE === "1") return true;
+
+  try {
+    const search = window.location?.search || "";
+    const hasQueryFlag = /(?:[?&])marixEmbed(?:=|&|$)/i.test(search) || /(?:[?&])openUrl=/i.test(search);
+    const hasSessionFlag = window.sessionStorage?.getItem("marixEmbed") === "1";
+    return hasQueryFlag || hasSessionFlag;
+  } catch (_err) {
+    return false;
+  }
+};
+
 export type WebPluginManagerParams = {
   utilityConnection: UtilityConnection;
   pluginStore: PluginStoreService;
@@ -74,6 +87,13 @@ export default class WebPluginManager {
   async initialize() {
     if (this.initialized) {
       log.warn("Calling initialize when already initialized");
+      return;
+    }
+
+    if (isEmbeddedMode()) {
+      log.info("Embedded mode detected: skipping web plugin manager initialization");
+      this.plugins = [];
+      this.initialized = true;
       return;
     }
 

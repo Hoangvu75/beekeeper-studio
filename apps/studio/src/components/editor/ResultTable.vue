@@ -1,7 +1,7 @@
 <template>
   <div
     class="result-table"
-    :class="{ 'hidden-filter': hiddenFilter }"
+    :class="{ 'hidden-filter': hiddenFilter, 'remote-pagination': isRemoteQueryPagination }"
     v-hotkey="keymap"
   >
     <form
@@ -125,6 +125,14 @@
       },
       tableData() {
           return this.dataToTableData(this.result, this.tableColumns)
+      },
+      queryPaginationMeta() {
+        const meta = this.result && this.result.__marixQueryPagination
+        if (!meta || !meta.enabled || !meta.baseQuery) return null
+        return meta
+      },
+      isRemoteQueryPagination() {
+        return !!this.queryPaginationMeta
       },
       tableTruncated() {
           return this.result.truncated
@@ -279,11 +287,10 @@
         if (this.tabulator) {
           this.tabulator.destroy()
         }
-        this.tabulator = tabulatorForTableData(this.$refs.tabulator, {
+        const tabulatorOptions = {
           table: this.result.tableName,
           schema: this.result.schema,
           persistenceID: this.tableId,
-          data: this.tableData, //link data to table
           columns: this.tableColumns, //define table columns
           height: this.actualTableHeight,
           downloadConfig: {
@@ -315,7 +322,125 @@
               ];
             },
           },
-        });
+        }
+
+        if (this.isRemoteQueryPagination) {
+          tabulatorOptions.ajaxURL = 'http://fake'
+          tabulatorOptions.pagination = true
+          tabulatorOptions.paginationMode = 'remote'
+          tabulatorOptions.paginationSize = this.queryPaginationMeta.pageSize
+          tabulatorOptions.paginationInitialPage = this.queryPaginationMeta.page || 1
+          tabulatorOptions.paginationButtonCount = 3
+          tabulatorOptions.paginationSizeSelector = false
+          tabulatorOptions.paginationCounter = 'rows'
+          tabulatorOptions.ajaxRequestFunc = (url, config, params) => this.queryDataFetch(url, config, params)
+        } else {
+          tabulatorOptions.data = this.tableData // link data to table
+          tabulatorOptions.pagination = true
+          tabulatorOptions.paginationMode = 'local'
+          tabulatorOptions.paginationSize = this.$bksConfig.ui.tableTable.pageSize
+          tabulatorOptions.paginationInitialPage = 1
+          tabulatorOptions.paginationButtonCount = 0
+          tabulatorOptions.paginationSizeSelector = false
+          tabulatorOptions.paginationCounter = false
+        }
+
+        this.tabulator = tabulatorForTableData(this.$refs.tabulator, tabulatorOptions);
+        if (this.isRemoteQueryPagination) {
+          this.$nextTick(() => {
+            if (this.tabulator) {
+              this.tabulator.setData(tabulatorOptions.ajaxURL);
+            }
+          });
+        }
+      },
+      buildPaginatedQuery(queryText, limit, offset) {
+        const stripped = String(queryText || '').trim().replace(/;\s*$/, '')
+        const safeLimit = Math.max(1, Number(limit) || 1)
+        const safeOffset = Math.max(0, Number(offset) || 0)
+        return `SELECT * FROM (${stripped}) marix_query_page LIMIT ${safeLimit} OFFSET ${safeOffset}`
+      },
+      async queryDataFetch(_url, _config, params) {
+        const meta = this.queryPaginationMeta
+        if (!meta) {
+          return {
+            last_page: 1,
+            data: this.tableData,
+          }
+        }
+
+        const rawParams = params || {}
+        const page = Math.max(1, Number(rawParams.page ?? rawParams.pagination?.page ?? 1))
+        const pageSize = Math.max(1, Number(rawParams.size ?? rawParams.pagination?.size ?? meta.pageSize ?? 100))
+        meta.pageSize = pageSize
+        const offset = (page - 1) * pageSize
+        const pagedQuery = this.buildPaginatedQuery(meta.baseQuery, pageSize + 1, offset)
+
+        try {
+          let totalRows = Number(meta.totalRows)
+          if (!Number.isFinite(totalRows) || totalRows < 0) {
+            if (!meta.totalRowsPromise) {
+              const countQuery = `SELECT COUNT(*) AS marix_total_rows FROM (${String(meta.baseQuery || '').trim().replace(/;\s*$/, '')}) marix_query_count`
+              meta.totalRowsPromise = (async () => {
+                try {
+                  const countRunningQuery = await this.connection.query(countQuery, this.tab.id)
+                  const countResults = await countRunningQuery.execute()
+                  const countResult = Array.isArray(countResults) ? (countResults?.[0] || {}) : (countResults || {})
+                  const countRows = Array.isArray(countResult.rows)
+                    ? countResult.rows
+                    : (Array.isArray(countResult.data) ? countResult.data : [])
+                  const firstRow = countRows?.[0] || {}
+                  const rawValue = firstRow.marix_total_rows ?? firstRow.MARIX_TOTAL_ROWS ?? firstRow.count ?? firstRow.COUNT ?? 0
+                  const parsed = Number(rawValue)
+                  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null
+                } catch (countError) {
+                  console.warn('query pagination count failed', countError)
+                  return null
+                }
+              })()
+            }
+
+            const resolvedTotalRows = await meta.totalRowsPromise
+            meta.totalRowsPromise = null
+            if (Number.isFinite(resolvedTotalRows) && resolvedTotalRows >= 0) {
+              totalRows = resolvedTotalRows
+              meta.totalRows = resolvedTotalRows
+            }
+          }
+
+          const runningQuery = await this.connection.query(pagedQuery, this.tab.id)
+          const results = await runningQuery.execute()
+          const firstResult = Array.isArray(results) ? (results?.[0] || {}) : (results || {})
+          const rows = Array.isArray(firstResult.rows)
+            ? [...firstResult.rows]
+            : (Array.isArray(firstResult.data) ? [...firstResult.data] : [])
+          const hasNext = rows.length > pageSize
+          if (hasNext) {
+            rows.pop()
+          }
+
+          const data = this.dataToTableData({ rows }, this.tableColumns, offset)
+          const fallbackLastRow = offset + rows.length + (hasNext ? 1 : 0)
+          const knownTotalRows = Number(meta.totalRows)
+          const lastRow = Number.isFinite(knownTotalRows) && knownTotalRows >= 0
+            ? knownTotalRows
+            : fallbackLastRow
+          const lastPage = Number.isFinite(knownTotalRows) && knownTotalRows >= 0
+            ? Math.max(1, Math.ceil(knownTotalRows / pageSize))
+            : (hasNext ? page + 1 : page)
+          return {
+            last_page: lastPage,
+            last_row: lastRow,
+            data
+          }
+        } catch (error) {
+          console.error('query pagination fetch error', error)
+          return {
+            last_page: page,
+            // Keep already rendered rows if page fetch fails.
+            data: this.tableData,
+          }
+        }
       },
       focusOnFilterInput() {
         this.hiddenFilter = false
@@ -538,6 +663,17 @@
     &::v-deep:not(.hidden-filter) {
       .tabulator-tableholder {
         padding-bottom: 5rem;
+      }
+    }
+
+    &::v-deep .tabulator-footer {
+      display: flex;
+    }
+
+    &.remote-pagination::v-deep {
+      .tabulator-page-size,
+      .tabulator-page-counter {
+        display: none !important;
       }
     }
   }

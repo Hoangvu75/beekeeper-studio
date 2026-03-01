@@ -1,5 +1,13 @@
-import { Extension } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import {
+  Decoration,
+  DecorationSet,
+  EditorView,
+} from "@codemirror/view";
+import {
+  Extension,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
 import { Entity, TableEntity } from "../../types";
 import { isTableLikeEntity } from "../utils";
 
@@ -13,10 +21,50 @@ type TableNavigationConfig = {
   defaultSchemaGetter?: () => string | undefined;
   onNavigate?: (params: EntityNavigationParams) => void;
 };
+type IdentifierAtPosition = {
+  identifier: string;
+  from: number;
+  to: number;
+};
+type Range = { from: number; to: number };
+type ResolvedTarget = EntityNavigationParams & Range;
 
 const IDENTIFIER_REGEX =
   /(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*)(?:\.(?:"(?:[^"]|"")+"|[A-Za-z_][\w$]*))*/g;
 const SEGMENT_REGEX = /"(?:[^"]|"")+"|[^.]+/g;
+const setHoverRangeEffect = StateEffect.define<Range | null>();
+const hoverMark = Decoration.mark({ class: "cm-bks-table-link" });
+const hoverRangeField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    let next = value.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (effect.is(setHoverRangeEffect)) {
+        const range = effect.value;
+        next = range
+          ? Decoration.set([hoverMark.range(range.from, range.to)])
+          : Decoration.none;
+      }
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+const hoverTheme = EditorView.baseTheme({
+  ".cm-bks-table-link": {
+    textDecoration: "underline",
+    textDecorationThickness: "1.5px",
+    textUnderlineOffset: "2px",
+    textDecorationColor: "currentColor",
+  },
+  "&dark .cm-bks-table-link": {
+    color: "#60a5fa",
+  },
+  "&light .cm-bks-table-link": {
+    color: "#2563eb",
+  },
+});
 
 function normalizeIdentifierPart(input: string): string {
   const value = input.trim();
@@ -40,7 +88,7 @@ function findIdentifierAtPosition(
   view: EditorView,
   x: number,
   y: number
-): string | null {
+): IdentifierAtPosition | null {
   const pos = view.posAtCoords({ x, y });
   if (pos == null) return null;
 
@@ -53,7 +101,11 @@ function findIdentifierAtPosition(
     const from = match.index;
     const to = match.index + match[0].length;
     if (offset >= from && offset <= to) {
-      return match[0];
+      return {
+        identifier: match[0],
+        from: line.from + from,
+        to: line.from + to,
+      };
     }
   }
 
@@ -110,7 +162,20 @@ export function tableNavigationExtension({
   onNavigate,
 }: TableNavigationConfig): Extension {
   let lastMouseCoords: { x: number; y: number } | null = null;
+  let activeHoverRange: Range | null = null;
   let pointerActive = false;
+
+  const rangesEqual = (left: Range | null, right: Range | null): boolean => {
+    if (!left && !right) return true;
+    if (!left || !right) return false;
+    return left.from === right.from && left.to === right.to;
+  };
+
+  const updateHoverRange = (view: EditorView, range: Range | null) => {
+    if (rangesEqual(activeHoverRange, range)) return;
+    activeHoverRange = range;
+    view.dispatch({ effects: setHoverRangeEffect.of(range) });
+  };
 
   const clearPointer = (view: EditorView) => {
     if (!pointerActive) return;
@@ -128,79 +193,98 @@ export function tableNavigationExtension({
     view: EditorView,
     x: number,
     y: number
-  ): EntityNavigationParams | null => {
-    const identifier = findIdentifierAtPosition(view, x, y);
-    if (!identifier) return null;
+  ): ResolvedTarget | null => {
+    const identifierAtPosition = findIdentifierAtPosition(view, x, y);
+    if (!identifierAtPosition) return null;
 
     const entity = findEntityFromIdentifier(
-      identifier,
+      identifierAtPosition.identifier,
       entitiesGetter(),
       defaultSchemaGetter?.()
     );
     if (!entity) return null;
 
-    return { entity, identifier };
+    return {
+      entity,
+      identifier: identifierAtPosition.identifier,
+      from: identifierAtPosition.from,
+      to: identifierAtPosition.to,
+    };
   };
 
-  return EditorView.domEventHandlers({
-    mousemove(event, view) {
-      lastMouseCoords = { x: event.clientX, y: event.clientY };
+  return [
+    hoverRangeField,
+    hoverTheme,
+    EditorView.domEventHandlers({
+      mousemove(event, view) {
+        lastMouseCoords = { x: event.clientX, y: event.clientY };
 
-      if (!(event.ctrlKey || event.metaKey)) {
-        clearPointer(view);
+        if (!(event.ctrlKey || event.metaKey)) {
+          clearPointer(view);
+          updateHoverRange(view, null);
+          return false;
+        }
+
+        const target = resolveTarget(view, event.clientX, event.clientY);
+        if (target) {
+          setPointer(view);
+          updateHoverRange(view, { from: target.from, to: target.to });
+        } else {
+          clearPointer(view);
+          updateHoverRange(view, null);
+        }
+
         return false;
-      }
-
-      const target = resolveTarget(view, event.clientX, event.clientY);
-      if (target) {
-        setPointer(view);
-      } else {
+      },
+      mouseleave(_event, view) {
         clearPointer(view);
-      }
-
-      return false;
-    },
-    mouseleave(_event, view) {
-      clearPointer(view);
-      return false;
-    },
-    keydown(event, view) {
-      if (!lastMouseCoords) return false;
-      if (!(event.ctrlKey || event.metaKey)) return false;
-      const target = resolveTarget(view, lastMouseCoords.x, lastMouseCoords.y);
-      if (target) setPointer(view);
-      return false;
-    },
-    keyup(event, view) {
-      if (!lastMouseCoords) {
-        clearPointer(view);
+        updateHoverRange(view, null);
         return false;
-      }
-
-      if (!(event.ctrlKey || event.metaKey)) {
-        clearPointer(view);
+      },
+      keydown(event, view) {
+        if (!lastMouseCoords) return false;
+        if (!(event.ctrlKey || event.metaKey)) return false;
+        const target = resolveTarget(view, lastMouseCoords.x, lastMouseCoords.y);
+        if (target) {
+          setPointer(view);
+          updateHoverRange(view, { from: target.from, to: target.to });
+        }
         return false;
-      }
+      },
+      keyup(event, view) {
+        if (!lastMouseCoords) {
+          clearPointer(view);
+          updateHoverRange(view, null);
+          return false;
+        }
 
-      const target = resolveTarget(view, lastMouseCoords.x, lastMouseCoords.y);
-      if (target) {
-        setPointer(view);
-      } else {
-        clearPointer(view);
-      }
-      return false;
-    },
-    mousedown(event, view) {
-      if (!(event.ctrlKey || event.metaKey)) return false;
+        if (!(event.ctrlKey || event.metaKey)) {
+          clearPointer(view);
+          updateHoverRange(view, null);
+          return false;
+        }
 
-      const target = resolveTarget(view, event.clientX, event.clientY);
-      if (!target) return false;
+        const target = resolveTarget(view, lastMouseCoords.x, lastMouseCoords.y);
+        if (target) {
+          setPointer(view);
+          updateHoverRange(view, { from: target.from, to: target.to });
+        } else {
+          clearPointer(view);
+          updateHoverRange(view, null);
+        }
+        return false;
+      },
+      mousedown(event, view) {
+        if (!(event.ctrlKey || event.metaKey)) return false;
 
-      event.preventDefault();
-      event.stopPropagation();
-      onNavigate?.(target);
-      return true;
-    },
-  });
+        const target = resolveTarget(view, event.clientX, event.clientY);
+        if (!target) return false;
+
+        event.preventDefault();
+        event.stopPropagation();
+        onNavigate?.(target);
+        return true;
+      },
+    }),
+  ];
 }
-

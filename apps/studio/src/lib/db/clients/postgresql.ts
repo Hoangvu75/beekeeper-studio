@@ -72,7 +72,7 @@ interface QueryResult {
   rows: any[]
   columns: FieldDef[]
   command: PgQueryResult['command']
-  rowCount: PgQueryResult['rowCount']
+  rowCount: number
   arrayMode: boolean
 }
 
@@ -1379,13 +1379,13 @@ export class PostgresClient extends BasicDatabaseClient<QueryResult, PoolClient>
     const fields = this.parseFields(data.columns, rowResults)
     const fieldIds = fields.map(f => f.id)
     const isSelect = data.command === 'SELECT';
-    const rowCount = data.rowCount || data.rows?.length || 0
+    const rowCount = this.normalizeRowCountValue(data, data.rows)
     return {
       command: command || data.command,
       rows: rowResults ? data.rows.map(r => _.zipObject(fieldIds, r)) : data.rows,
       fields: fields,
       rowCount: rowCount,
-      affectedRows: !isSelect && !isNaN(data.rowCount) ? data.rowCount : undefined,
+      affectedRows: !isSelect ? rowCount : undefined,
     };
   }
 
@@ -1625,7 +1625,7 @@ export class PostgresClient extends BasicDatabaseClient<QueryResult, PoolClient>
             rows: r.rows,
             columns: r.fields,
             command: r.command,
-            rowCount: r.rowCount,
+            rowCount: this.normalizeRowCountValue(r, r.rows),
             arrayMode: options.arrayMode,
           }))
         } else {
@@ -1635,13 +1635,34 @@ export class PostgresClient extends BasicDatabaseClient<QueryResult, PoolClient>
             rows: row.rows,
             columns: row.fields,
             command: row.command,
-            rowCount: row.rowCount,
+            rowCount: this.normalizeRowCountValue(row, row.rows),
             arrayMode: options.arrayMode,
           };
         }
         resolve(qr);
       });
     });
+  }
+
+  private normalizeRowCountValue(input: any, rows: any[] = []): number {
+    let rawValue: any;
+    try {
+      rawValue = input?.rowCount;
+    } catch {
+      rawValue = undefined;
+    }
+
+    if (typeof rawValue === 'function') {
+      try {
+        rawValue = rawValue.call(input);
+      } catch {
+        rawValue = undefined;
+      }
+    }
+
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed)) return parsed;
+    return Array.isArray(rows) ? rows.length : 0;
   }
 
   private async insertRows(rawInserts: TableInsert[], connection: PoolClient) {

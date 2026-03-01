@@ -1333,8 +1333,33 @@
           const query = this.deparameterizedQuery
           this.$modal.hide(`parameters-modal-${this.tab.id}`)
           this.runningCount = identification.length || 1
+          const rawQueryText = String(query || '')
+          const trimmedQuery = rawQueryText.trim().replace(/;\s*$/, '')
+          const nonEmptyStatements = rawQueryText
+            .split(';')
+            .map((statement) => statement.trim())
+            .filter((statement) => statement.length > 0)
+          const hasSingleStatement = nonEmptyStatements.length <= 1
+          const firstStatement = (nonEmptyStatements[0] || trimmedQuery).replace(/;\s*$/, '')
+          const firstIdentification = identification.find((item) => {
+            const text = String(item?.text || '').trim()
+            return text.length > 0
+          })
+          const queryLooksReadOnly = !!firstIdentification && firstIdentification.executionType === 'READ_ONLY'
+          const queryLooksSelect = /^(select|with)\b/i.test(firstStatement)
+          const paginationPageSize = Math.max(1, Number(this.$bksConfig?.ui?.tableTable?.pageSize || 100))
+          const shouldUseQueryPagination =
+            !!trimmedQuery &&
+            hasSingleStatement &&
+            (queryLooksReadOnly || queryLooksSelect) &&
+            !this.dryRun
+
+          const queryToExecute = shouldUseQueryPagination
+            ? `SELECT * FROM (${trimmedQuery}) marix_query_page LIMIT ${paginationPageSize + 1} OFFSET 0`
+            : query
+
           // Dry run is for bigquery, allows query cost estimations
-          this.runningQuery = await this.connection.query(query, this.tab.id, { dryRun: this.dryRun}, this.hasActiveTransaction);
+          this.runningQuery = await this.connection.query(queryToExecute, this.tab.id, { dryRun: this.dryRun}, this.hasActiveTransaction);
           const queryStartTime = new Date()
           const results = await this.runningQuery.execute();
           const queryEndTime = new Date()
@@ -1349,9 +1374,54 @@
           // eslint-disable-next-line
           // @ts-ignore
           this.executeTime = queryEndTime - queryStartTime
+          const paginatedResultIndex = shouldUseQueryPagination
+            ? results.findIndex((resultCandidate) => {
+              const hasFields = Array.isArray(resultCandidate?.fields) && resultCandidate.fields.length > 0
+              const hasRows = Array.isArray(resultCandidate?.rows) || Array.isArray(resultCandidate?.data)
+              return hasFields && hasRows
+            })
+            : -1
+
           let totalRows = 0
           results.forEach((result, idx) => {
-            result.rowCount = result.rowCount || 0
+            const resultRows = Array.isArray(result.rows) ? result.rows : []
+            const rowCountFromFunction = typeof result.rowCount === 'function'
+              ? Number(result.rowCount())
+              : NaN
+            let resolvedRowCount = typeof result.rowCount === 'number'
+              ? result.rowCount
+              : (Number.isFinite(rowCountFromFunction) ? rowCountFromFunction : resultRows.length)
+
+            if (!Number.isFinite(resolvedRowCount) || resolvedRowCount < 0) {
+              resolvedRowCount = resultRows.length
+            }
+
+            const shouldPaginateThisResult = shouldUseQueryPagination && (
+              paginatedResultIndex === -1 ? idx === 0 : idx === paginatedResultIndex
+            )
+
+            if (shouldPaginateThisResult) {
+              const hasNextPage = resultRows.length > paginationPageSize
+              const visibleRows = hasNextPage ? resultRows.slice(0, paginationPageSize) : resultRows
+              result.rows = visibleRows
+              result.rowCount = visibleRows.length
+              result.totalRowCount = visibleRows.length
+              result.__marixQueryPagination = {
+                enabled: true,
+                baseQuery: trimmedQuery,
+                pageSize: paginationPageSize,
+                page: 1,
+                hasNext: hasNextPage,
+                totalRows: hasNextPage ? null : visibleRows.length,
+                totalRowsPromise: null,
+              }
+            } else {
+              result.rowCount = resolvedRowCount
+              result.totalRowCount =
+                typeof result.totalRowCount === 'number' && Number.isFinite(result.totalRowCount)
+                  ? result.totalRowCount
+                  : resolvedRowCount
+            }
 
             totalRows += result.totalRowCount
             const identifiedTables = identification[idx]?.tables || []
@@ -1367,7 +1437,6 @@
           // const defaultResult = Math.max(results.length - 1, 0)
 
           const nonEmptyResult = _.chain(results).findLastIndex((r) => !!r.rows?.length).value()
-          console.log("non empty result", nonEmptyResult)
           this.selectedResult = nonEmptyResult === -1 ? results.length - 1 : nonEmptyResult
 
           const lastQuery = this.$store.state['data/usedQueries']?.items?.[0]
